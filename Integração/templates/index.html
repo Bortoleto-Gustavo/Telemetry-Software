@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Live CSV Graph</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #liveChart { max-width: 100%; }
+    </style>
+</head>
+<body>
+    <h2>Live Graph</h2>
+    <select id="columnSelect"></select>
+    <canvas id="liveChart" width="800" height="400"></canvas>
+
+    <script>
+        let chart;
+        let lastModified = 0;
+        const debug = true; // Set to false in production
+
+        async function logDebug(message) {
+            if (debug) console.log(`[DEBUG] ${new Date().toISOString()}: ${message}`);
+        }
+
+        async function fetchCSV() {
+            try {
+                logDebug("Fetching CSV data...");
+                const response = await fetch(`/data.csv?t=${Date.now()}`);
+                const text = await response.text();
+                logDebug(`Received CSV data (length: ${text.length})`);
+                
+                const rows = text.trim().split('\n').map(r => r.split(','));
+                logDebug(`Found ${rows.length} rows`);
+
+                if (rows.length < 2) {
+                    logDebug("Not enough rows to display");
+                    return;
+                }
+
+                const headers = rows[0];
+                const selectedColumn = document.getElementById('columnSelect').value || headers[1];
+                const columnIndex = headers.indexOf(selectedColumn);
+                logDebug(`Selected column: ${selectedColumn} (index ${columnIndex})`);
+
+                const labels = rows.slice(1).map(row => row[0]);
+                const chartData = rows.slice(1).map(row => parseFloat(row[columnIndex]));
+                logDebug(`First 5 labels: ${labels.slice(0, 5)}`);
+                logDebug(`First 5 values: ${chartData.slice(0, 5)}`);
+
+                if (!chart) {
+                    logDebug("Creating new chart");
+                    createChart(headers, labels, chartData, selectedColumn);
+                } else {
+                    logDebug("Updating existing chart");
+                    updateChart(labels, chartData, selectedColumn);
+                }
+            } catch (error) {
+                console.error("Error fetching CSV:", error);
+            }
+        }
+
+        function createChart(headers, labels, data, selectedColumn) {
+            const ctx = document.getElementById('liveChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: selectedColumn,
+                        data: data,
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: { beginAtZero: false }
+                    }
+                }
+            });
+            
+            // Populate dropdown
+            const select = document.getElementById('columnSelect');
+            select.innerHTML = '';
+            headers.forEach((header, index) => {
+                if (index > 0) { // Skip first column (usually timestamp)
+                    const option = document.createElement('option');
+                    option.value = header;
+                    option.textContent = header;
+                    select.appendChild(option);
+                }
+            });
+            select.addEventListener('change', fetchCSV);
+        }
+
+        function updateChart(labels, data, selectedColumn) {
+            chart.data.labels = labels;
+            chart.data.datasets[0].data = data;
+            chart.data.datasets[0].label = selectedColumn;
+            chart.update();
+        }
+
+        async function checkForUpdates() {
+            try {
+                logDebug("Checking for updates...");
+                const response = await fetch(`/check-update?t=${Date.now()}`);
+                const data = await response.json();
+                logDebug(`Current mod time: ${data.last_modified}, Last known: ${lastModified}`);
+                
+                if (data.last_modified > lastModified) {
+                    logDebug("File has changed, updating...");
+                    lastModified = data.last_modified;
+                    await fetchCSV();
+                } else {
+                    logDebug("No changes detected");
+                }
+            } catch (error) {
+                console.error("Update check failed:", error);
+            }
+        }
+
+        // Initial load
+        logDebug("Initializing application");
+        fetchCSV();
+        
+        // Set up polling (every 2 seconds)
+        setInterval(checkForUpdates, 500);
+    </script>
+</body>
+</html>
