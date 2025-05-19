@@ -1,132 +1,171 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <title>Live CSV Graph</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
-        #liveChart { max-width: 100%; }
+        #channelSelect { margin-bottom: 10px; }
+        .checkbox-group { margin: 5px 0; }
     </style>
 </head>
 <body>
     <h2>Live Graph</h2>
-    <select id="columnSelect"></select>
+
+    <div id="channelSelect" class="checkbox-group"></div>
     <canvas id="liveChart" width="800" height="400"></canvas>
 
     <script>
         let chart;
         let lastModified = 0;
-        const debug = true; // Set to false in production
+        let selectedChannels = new Set();
+        const colorMap = {}; // Mantém cores fixas por canal
 
-        async function logDebug(message) {
-            if (debug) console.log(`[DEBUG] ${new Date().toISOString()}: ${message}`);
+        const fixedColors = [
+            '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
+            '#9467bd', '#8c564b', '#e377c2', '#7f7f7f',
+            '#bcbd22', '#17becf'
+        ];
+        let colorIndex = 0;
+
+        function getColorForChannel(channel) {
+            if (!colorMap[channel]) {
+                colorMap[channel] = fixedColors[colorIndex % fixedColors.length];
+                colorIndex++;
+            }
+            return colorMap[channel];
         }
 
         async function fetchCSV() {
             try {
-                logDebug("Fetching CSV data...");
                 const response = await fetch(`/data.csv?t=${Date.now()}`);
                 const text = await response.text();
-                logDebug(`Received CSV data (length: ${text.length})`);
-                
-                const rows = text.trim().split('\n').map(r => r.split(','));
-                logDebug(`Found ${rows.length} rows`);
 
-                if (rows.length < 2) {
-                    logDebug("Not enough rows to display");
-                    return;
-                }
+                const rows = text.trim().split('\n').map(r => r.split(','));
+                if (rows.length < 2) return;
 
                 const headers = rows[0];
-                const selectedColumn = document.getElementById('columnSelect').value || headers[1];
-                const columnIndex = headers.indexOf(selectedColumn);
-                logDebug(`Selected column: ${selectedColumn} (index ${columnIndex})`);
+                const dataRows = rows.slice(1);
 
-                const labels = rows.slice(1).map(row => row[0]);
-                const chartData = rows.slice(1).map(row => parseFloat(row[columnIndex]));
-                logDebug(`First 5 labels: ${labels.slice(0, 5)}`);
-                logDebug(`First 5 values: ${chartData.slice(0, 5)}`);
-
-                if (!chart) {
-                    logDebug("Creating new chart");
-                    createChart(headers, labels, chartData, selectedColumn);
-                } else {
-                    logDebug("Updating existing chart");
-                    updateChart(labels, chartData, selectedColumn);
+                if (document.getElementById('channelSelect').children.length === 0) {
+                    populateCheckboxes(headers);
                 }
+
+                const timestampIndex = 0;
+                const labels = dataRows.map(row => parseFloat(row[timestampIndex]));
+                const datasets = [];
+
+                headers.forEach((header, index) => {
+                    if (index === timestampIndex || !selectedChannels.has(header)) return;
+
+                    const values = dataRows.map(row => {
+                        const val = row[index];
+                        return isNaN(val) ? null : parseFloat(val);
+                    });
+
+                    datasets.push({
+                        label: header,
+                        data: labels.map((x, i) => ({ x, y: values[i] })),
+                        borderColor: getColorForChannel(header),
+                        backgroundColor: getColorForChannel(header),
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        fill: false,
+                        tension: 0.1
+                    });
+                });
+
+                renderChart(datasets);
             } catch (error) {
-                console.error("Error fetching CSV:", error);
+                console.error("Erro ao buscar CSV:", error);
             }
         }
 
-        function createChart(headers, labels, data, selectedColumn) {
+        function populateCheckboxes(headers) {
+            const container = document.getElementById('channelSelect');
+            headers.forEach((header, index) => {
+                if (index === 0) return;
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = header;
+                checkbox.checked = true;
+                selectedChannels.add(header);
+
+                checkbox.addEventListener('change', () => {
+                    if (checkbox.checked) {
+                        selectedChannels.add(header);
+                    } else {
+                        selectedChannels.delete(header);
+                    }
+                    fetchCSV();
+                });
+
+                const label = document.createElement('label');
+                label.textContent = header;
+                label.style.marginRight = "15px";
+
+                container.appendChild(checkbox);
+                container.appendChild(label);
+            });
+        }
+
+        function renderChart(datasets) {
             const ctx = document.getElementById('liveChart').getContext('2d');
+            if (chart) chart.destroy();
+
+            const allTimestamps = datasets.flatMap(ds => ds.data.map(p => p.x));
+            const maxTimestamp = Math.max(...allTimestamps);
+            const minTimestamp = Math.max(0, maxTimestamp - 10);
+
             chart = new Chart(ctx, {
                 type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: selectedColumn,
-                        data: data,
-                        borderColor: 'rgb(75, 192, 192)',
-                        tension: 0.1
-                    }]
-                },
+                data: { datasets },
                 options: {
                     responsive: true,
+                    parsing: false,
+                    animation: false,
                     scales: {
-                        y: { beginAtZero: false }
+                        x: {
+                            type: 'linear',
+                            title: { display: true, text: 'Timestamp (s)' },
+                            min: minTimestamp,
+                            max: maxTimestamp,
+                            ticks: {
+                                callback: function(value) {
+                                    return parseFloat(value).toFixed(1);
+                                }
+                            }
+                        },
+                        y: {
+                            title: { display: true, text: 'Valor' }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top'
+                        }
                     }
                 }
             });
-            
-            // Populate dropdown
-            const select = document.getElementById('columnSelect');
-            select.innerHTML = '';
-            headers.forEach((header, index) => {
-                if (index > 0) { // Skip first column (usually timestamp)
-                    const option = document.createElement('option');
-                    option.value = header;
-                    option.textContent = header;
-                    select.appendChild(option);
-                }
-            });
-            select.addEventListener('change', fetchCSV);
-        }
-
-        function updateChart(labels, data, selectedColumn) {
-            chart.data.labels = labels;
-            chart.data.datasets[0].data = data;
-            chart.data.datasets[0].label = selectedColumn;
-            chart.update();
         }
 
         async function checkForUpdates() {
             try {
-                logDebug("Checking for updates...");
                 const response = await fetch(`/check-update?t=${Date.now()}`);
                 const data = await response.json();
-                logDebug(`Current mod time: ${data.last_modified}, Last known: ${lastModified}`);
-                
                 if (data.last_modified > lastModified) {
-                    logDebug("File has changed, updating...");
                     lastModified = data.last_modified;
                     await fetchCSV();
-                } else {
-                    logDebug("No changes detected");
                 }
             } catch (error) {
-                console.error("Update check failed:", error);
+                console.error("Falha ao verificar atualizações:", error);
             }
         }
 
-        // Initial load
-        logDebug("Initializing application");
         fetchCSV();
-        
-        // Set up polling (every 2 seconds)
-        setInterval(checkForUpdates, 500);
+        setInterval(checkForUpdates, 1000);
     </script>
 </body>
 </html>

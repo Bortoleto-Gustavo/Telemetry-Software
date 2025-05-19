@@ -8,13 +8,25 @@
 </head>
 <body>
     <main>
-        <h1>CSV File receiver</h1>
+        <h1>CSV File Receiver</h1>
         <form action="/files" method="post" enctype="multipart/form-data">
             <input type="file" id="get_csv" accept=".csv" name="get_csv" hidden/>
-            <label for="get_csv">Import a csv file</label>
+            <label for="get_csv" class="file-label">
+                Import a CSV file
+                <span id="file-name" style="margin-left: 10px; color: gray;">No file selected</span>
+            </label>
             <button type="submit">Upload</button>
         </form>
     </main>
-    <script src="/static/index.js"></script>
+
+    <script>
+        const fileInput = document.getElementById('get_csv');
+        const fileNameSpan = document.getElementById('file-name');
+
+        fileInput.addEventListener('change', () => {
+            const fileName = fileInput.files.length > 0 ? fileInput.files[0].name : "No file selected";
+            fileNameSpan.textContent = fileName;
+        });
+    </script>
 </body>
 </html>

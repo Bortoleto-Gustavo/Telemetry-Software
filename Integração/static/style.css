@@ -1,18 +1,50 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+}
+
 label {
     background-color: #6400b6;
-    border: none;
     color: white;
-    padding: 0.75rem;
-    text-decoration: none;
+    padding: 0.5rem 1rem;
     border-radius: 0.35rem;
-    margin-top: 5rem;
+    margin-right: 0.5rem;
     cursor: pointer;
 }
+
 button {
     background-color: #6400b6;
     color: white;
+    border: none;
     border-radius: 0.35rem;
-    padding: 0.75rem;
-    margin-top: 5rem;
-    cursor: pointer; 
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+button:hover {
+    background-color: #510094;
+}
+
+input[type="number"] {
+    padding: 0.5rem;
+    border-radius: 0.35rem;
+    border: 1px solid #ccc;
+    width: 100px;
+    margin-right: 1rem;
+}
+
+select {
+    padding: 0.5rem;
+    border-radius: 0.35rem;
+    border: 1px solid #ccc;
+    margin-right: 1rem;
+}
+
+div {
+    margin-bottom: 1rem;
+}
+
+canvas {
+    max-width: 100%;
 }
