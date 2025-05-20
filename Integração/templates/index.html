@@ -1,171 +1,799 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Live CSV Graph</title>
+    <title>Advanced Graph Analyzer</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjs@11.6.0"></script>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        #channelSelect { margin-bottom: 10px; }
-        .checkbox-group { margin: 5px 0; }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .chart-container {
+            width: 100%;
+            overflow-x: auto;
+            border: 1px solid #eee;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+        #liveChart {
+            min-width: 3000px;
+            cursor: crosshair;
+        }
+        .controls {
+            margin: 15px 0;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        button, select {
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button {
+            background: #650474;
+            color: white;
+            border: none;
+        }
+        button:hover {
+            background: #9e06b6;
+        }
+        button.secondary {
+            background: #FFA100;
+            color: #eee;
+        }
+        select {
+            border: 1px solid #ddd;
+        }
+        .calculator {
+            border: 1px solid #ddd;
+            padding: 20px;
+            margin-top: 20px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        .selected-points {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 3px;
+            min-height: 50px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .calculation-results {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #e9f7ef;
+            border-radius: 3px;
+        }
+        .column-selector {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .column-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .selection-rectangle {
+            position: absolute;
+            background: rgba(73, 0, 116, 0.2);
+            border: 1px dashed rgba(255, 178, 11, 0.8);
+            pointer-events: none;
+            display: none;
+        }
     </style>
 </head>
 <body>
-    <h2>Live Graph</h2>
+    <h1>Advanced Graph Analyzer</h1>
+    
+    <div class="controls">
+        <button id="pauseBtn">Pause Updates</button>
+        <button id="resetZoomBtn">Reset Zoom</button>
+        <button id="fitToScreenBtn">Fit to Screen</button>
+        <button id="clearSelection" class="secondary">Clear Selection</button>
+    </div>
 
-    <div id="channelSelect" class="checkbox-group"></div>
-    <canvas id="liveChart" width="800" height="400"></canvas>
+    <div class="column-selector" id="columnSelector">
+        <!-- Dynamic checkboxes will appear here -->
+    </div>
+    
+    <div class="chart-container">
+        <canvas id="liveChart" width="3000" height="500"></canvas>
+        <div class="selection-rectangle" id="selectionRectangle"></div>
+    </div>
+
+    <div class="calculator">
+        <h2>Data Calculator</h2>
+        <div class="selected-points" id="selectedPoints">
+            No points selected (click or drag on the graph)
+        </div>
+        
+        <div class="controls">
+            <button id="calculateAvg">Average</button>
+            <button id="calculateDiff">Difference</button>
+            <button id="calculateSum">Sum</button>
+            <button id="calculateDerivative">Derivative</button>
+            <button id="calculateIntegral">Integral</button>
+        </div>
+        
+        <div class="calculation-results" id="calculationResults"></div>
+    </div>
 
     <script>
+        // Chart and data variables
         let chart;
         let lastModified = 0;
-        let selectedChannels = new Set();
-        const colorMap = {}; // Mantém cores fixas por canal
+        let isPaused = false;
+        let allLabels = [];
+        let allData = {}; // Object with column names as keys
+        let selectedPoints = []; // Stores {index, label, value, dataset}
+        let isSelecting = false;
+        let selectionStart = null;
+        let availableColumns = [];
+        let activeDatasets = [];
 
-        const fixedColors = [
-            '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
-            '#9467bd', '#8c564b', '#e377c2', '#7f7f7f',
-            '#bcbd22', '#17becf'
-        ];
-        let colorIndex = 0;
+        // DOM elements
+        const selectionRectangle = document.getElementById('selectionRectangle');
 
-        function getColorForChannel(channel) {
-            if (!colorMap[channel]) {
-                colorMap[channel] = fixedColors[colorIndex % fixedColors.length];
-                colorIndex++;
-            }
-            return colorMap[channel];
+        // Initialize the chart
+        async function initChart() {
+            await fetchCSV();
+            setupEventListeners();
         }
 
+        // Fetch CSV data
         async function fetchCSV() {
+            if (isPaused) return;
+            
             try {
                 const response = await fetch(`/data.csv?t=${Date.now()}`);
                 const text = await response.text();
-
                 const rows = text.trim().split('\n').map(r => r.split(','));
+                
                 if (rows.length < 2) return;
 
                 const headers = rows[0];
-                const dataRows = rows.slice(1);
-
-                if (document.getElementById('channelSelect').children.length === 0) {
-                    populateCheckboxes(headers);
+                availableColumns = headers.slice(1); // Skip first column (labels)
+                
+                // Initialize data structure if needed
+                if (Object.keys(allData).length === 0) {
+                    headers.slice(1).forEach(col => {
+                        allData[col] = [];
+                    });
+                    // Default to showing first column
+                    activeDatasets = [headers[1]];
                 }
 
-                const timestampIndex = 0;
-                const labels = dataRows.map(row => parseFloat(row[timestampIndex]));
-                const datasets = [];
-
-                headers.forEach((header, index) => {
-                    if (index === timestampIndex || !selectedChannels.has(header)) return;
-
-                    const values = dataRows.map(row => {
-                        const val = row[index];
-                        return isNaN(val) ? null : parseFloat(val);
-                    });
-
-                    datasets.push({
-                        label: header,
-                        data: labels.map((x, i) => ({ x, y: values[i] })),
-                        borderColor: getColorForChannel(header),
-                        backgroundColor: getColorForChannel(header),
-                        borderWidth: 2,
-                        pointRadius: 3,
-                        fill: false,
-                        tension: 0.1
-                    });
+                // Store all historical data
+                allLabels = [...allLabels, ...rows.slice(1).map(row => row[0])];
+                
+                headers.slice(1).forEach((col, colIndex) => {
+                    const newData = rows.slice(1).map(row => parseFloat(row[colIndex + 1]));
+                    allData[col] = [...allData[col], ...newData];
                 });
 
-                renderChart(datasets);
+                updateColumnSelector();
+                if (!chart) {
+                    createChart();
+                } else {
+                    updateChart();
+                }
             } catch (error) {
-                console.error("Erro ao buscar CSV:", error);
+                console.error("Error fetching CSV:", error);
             }
         }
 
-        function populateCheckboxes(headers) {
-            const container = document.getElementById('channelSelect');
-            headers.forEach((header, index) => {
-                if (index === 0) return;
-
-                const checkbox = document.createElement('input');
-                checkbox.type = 'checkbox';
-                checkbox.value = header;
-                checkbox.checked = true;
-                selectedChannels.add(header);
-
-                checkbox.addEventListener('change', () => {
-                    if (checkbox.checked) {
-                        selectedChannels.add(header);
-                    } else {
-                        selectedChannels.delete(header);
-                    }
-                    fetchCSV();
-                });
-
-                const label = document.createElement('label');
-                label.textContent = header;
-                label.style.marginRight = "15px";
-
-                container.appendChild(checkbox);
-                container.appendChild(label);
-            });
-        }
-
-        function renderChart(datasets) {
+        // Create the chart
+        function createChart() {
             const ctx = document.getElementById('liveChart').getContext('2d');
-            if (chart) chart.destroy();
-
-            const allTimestamps = datasets.flatMap(ds => ds.data.map(p => p.x));
-            const maxTimestamp = Math.max(...allTimestamps);
-            const minTimestamp = Math.max(0, maxTimestamp - 10);
+            
+            // Prepare datasets
+            const datasets = activeDatasets.map(col => ({
+                label: col,
+                data: allData[col],
+                borderColor: getDatasetColor(col),
+                backgroundColor: hexToRgba(getDatasetColor(col), 0.1),
+                borderWidth: 2,
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                pointBackgroundColor: (context) => {
+                    return isPointSelected(context.dataIndex, col) 
+                        ? 'rgba(255, 99, 132, 0.8)' 
+                        : hexToRgba(getDatasetColor(col), 0.8);
+                },
+                fill: false,
+                tension: 0.1
+            }));
 
             chart = new Chart(ctx, {
                 type: 'line',
-                data: { datasets },
+                data: {
+                    labels: allLabels,
+                    datasets: datasets
+                },
                 options: {
-                    responsive: true,
-                    parsing: false,
-                    animation: false,
+                    responsive: false,
+                    animation: {
+                        duration: 0
+                    },
                     scales: {
                         x: {
-                            type: 'linear',
-                            title: { display: true, text: 'Timestamp (s)' },
-                            min: minTimestamp,
-                            max: maxTimestamp,
+                            type: 'category',
                             ticks: {
-                                callback: function(value) {
-                                    return parseFloat(value).toFixed(1);
-                                }
+                                autoSkip: true,
+                                maxRotation: 45,
+                                minRotation: 45
                             }
                         },
                         y: {
-                            title: { display: true, text: 'Valor' }
+                            beginAtZero: false
                         }
                     },
                     plugins: {
-                        legend: {
-                            position: 'top'
+                        zoom: {
+                            pan: {
+                                enabled: true,
+                                mode: 'x',
+                                modifierKey: 'ctrl'
+                            },
+                            zoom: {
+                                wheel: {
+                                    enabled: true
+                                },
+                                pinch: {
+                                    enabled: true
+                                },
+                                mode: 'x'
+                            }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.dataset.label}: ${context.parsed.y.toFixed(4)}`;
+                                }
+                            }
                         }
+                    },
+                    onClick: handleChartClick,
+                    onHover: handleChartHover
+                }
+            });
+
+            // Setup selection rectangle
+            setupSelectionHandlers();
+        }
+
+        // Update chart with new data
+        function updateChart() {
+            // Update labels
+            chart.data.labels = allLabels;
+            
+            // Update or create datasets
+            activeDatasets.forEach(col => {
+                const existingDataset = chart.data.datasets.find(ds => ds.label === col);
+                if (existingDataset) {
+                    existingDataset.data = allData[col];
+                    existingDataset.pointBackgroundColor = (context) => {
+                        return isPointSelected(context.dataIndex, col) 
+                            ? 'rgba(255, 99, 132, 0.8)' 
+                            : hexToRgba(getDatasetColor(col), 0.8);
+                    };
+                } else {
+                    chart.data.datasets.push({
+                        label: col,
+                        data: allData[col],
+                        borderColor: getDatasetColor(col),
+                        backgroundColor: hexToRgba(getDatasetColor(col), 0.1),
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                        pointBackgroundColor: (context) => {
+                            return isPointSelected(context.dataIndex, col) 
+                                ? 'rgba(255, 99, 132, 0.8)' 
+                                : hexToRgba(getDatasetColor(col), 0.8);
+                        },
+                        fill: false,
+                        tension: 0.1
+                    });
+                }
+            });
+
+            // Remove datasets that are no longer active
+            chart.data.datasets = chart.data.datasets.filter(ds => activeDatasets.includes(ds.label));
+            
+            if (!isPaused) {
+                chart.options.scales.x.min = allLabels[Math.max(0, allLabels.length - 50)];
+                chart.options.scales.x.max = allLabels[allLabels.length - 1];
+            }
+            
+            chart.update('none');
+        }
+
+        // Check if a point is selected
+        function isPointSelected(index, datasetLabel) {
+            return selectedPoints.some(p => p.index === index && p.dataset === datasetLabel);
+        }
+
+        // Handle chart clicks
+        function handleChartClick(event) {
+            if (isSelecting) return; // Skip if we're in the middle of a drag selection
+            
+            const points = chart.getElementsAtEventForMode(
+                event, 
+                'nearest', 
+                { intersect: true }, 
+                true
+            );
+            
+            if (points.length) {
+                const clickedPoint = points[0];
+                const index = clickedPoint.index;
+                const datasetLabel = chart.data.datasets[clickedPoint.datasetIndex].label;
+                
+                // Toggle selection - if already selected, remove it
+                const existingIndex = selectedPoints.findIndex(p => 
+                    p.index === index && p.dataset === datasetLabel
+                );
+                
+                if (existingIndex >= 0) {
+                    selectedPoints.splice(existingIndex, 1);
+                } else {
+                    selectedPoints.push({
+                        index: index,
+                        label: allLabels[index],
+                        value: allData[datasetLabel][index],
+                        dataset: datasetLabel
+                    });
+                }
+                
+                updateSelectedPointsDisplay();
+                chart.update();
+            }
+        }
+
+        // Handle chart hover (for selection rectangle)
+        function handleChartHover(event, chartElements) {
+            if (isSelecting && selectionStart) {
+                const chartArea = chart.chartArea;
+                const canvas = event.native.target;
+                const rect = canvas.getBoundingClientRect();
+                
+                const currentX = event.x - rect.left;
+                const currentY = event.y - rect.top;
+                
+                // Calculate rectangle dimensions
+                const left = Math.min(selectionStart.x, currentX);
+                const width = Math.abs(currentX - selectionStart.x);
+                const top = chartArea.top;
+                const height = chartArea.bottom - chartArea.top;
+                
+                // Position and show the selection rectangle
+                selectionRectangle.style.left = `${left}px`;
+                selectionRectangle.style.top = `${top}px`;
+                selectionRectangle.style.width = `${width}px`;
+                selectionRectangle.style.height = `${height}px`;
+                selectionRectangle.style.display = 'block';
+            }
+        }
+
+        // Setup mouse handlers for selection rectangle
+        function setupSelectionHandlers() {
+            const canvas = document.getElementById('liveChart');
+            
+            canvas.addEventListener('mousedown', (event) => {
+                if (event.ctrlKey || event.metaKey) {
+                    const rect = canvas.getBoundingClientRect();
+                    selectionStart = {
+                        x: event.clientX - rect.left,
+                        y: event.clientY - rect.top
+                    };
+                    isSelecting = true;
+                }
+            });
+            
+            canvas.addEventListener('mousemove', (event) => {
+                if (isSelecting) {
+                    // The actual visual update happens in handleChartHover
+                }
+            });
+            
+            canvas.addEventListener('mouseup', (event) => {
+                if (isSelecting) {
+                    const rect = canvas.getBoundingClientRect();
+                    const endX = event.clientX - rect.left;
+                    
+                    // Find all points within the selection range
+                    const startPixel = selectionStart.x;
+                    const endPixel = endX;
+                    const minPixel = Math.min(startPixel, endPixel);
+                    const maxPixel = Math.max(startPixel, endPixel);
+                    
+                    // Convert pixel range to data indexes
+                    const xAxis = chart.scales.x;
+                    const minIndex = Math.max(0, xAxis.getValueForPixel(minPixel));
+                    const maxIndex = Math.min(allLabels.length - 1, xAxis.getValueForPixel(maxPixel));
+                    
+                    // Select all points in this range across all active datasets
+                    for (let i = minIndex; i <= maxIndex; i++) {
+                        activeDatasets.forEach(datasetLabel => {
+                            if (!isPointSelected(i, datasetLabel)) {
+                                selectedPoints.push({
+                                    index: i,
+                                    label: allLabels[i],
+                                    value: allData[datasetLabel][i],
+                                    dataset: datasetLabel
+                                });
+                            }
+                        });
                     }
+                    
+                    updateSelectedPointsDisplay();
+                    chart.update();
+                    
+                    // Reset selection
+                    isSelecting = false;
+                    selectionStart = null;
+                    selectionRectangle.style.display = 'none';
+                }
+            });
+            
+            canvas.addEventListener('mouseleave', () => {
+                if (isSelecting) {
+                    isSelecting = false;
+                    selectionStart = null;
+                    selectionRectangle.style.display = 'none';
                 }
             });
         }
 
+        // Update the selected points display
+        function updateSelectedPointsDisplay() {
+            const container = document.getElementById('selectedPoints');
+            
+            if (selectedPoints.length === 0) {
+                container.innerHTML = 'No points selected (click or drag on the graph)';
+                return;
+            }
+            
+            // Group by dataset
+            const grouped = {};
+            selectedPoints.forEach(point => {
+                if (!grouped[point.dataset]) {
+                    grouped[point.dataset] = [];
+                }
+                grouped[point.dataset].push(point);
+            });
+            
+            let html = '<strong>Selected Points:</strong>';
+            for (const [dataset, points] of Object.entries(grouped)) {
+                html += `<h4>${dataset}</h4><ol>`;
+                points.forEach(point => {
+                    html += `<li>${point.label}: ${point.value.toFixed(4)}</li>`;
+                });
+                html += '</ol>';
+            }
+            container.innerHTML = html;
+        }
+
+        // Update column selector checkboxes
+        function updateColumnSelector() {
+            const container = document.getElementById('columnSelector');
+            container.innerHTML = '';
+            
+            availableColumns.forEach(col => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'column-checkbox';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `col-${col}`;
+                checkbox.checked = activeDatasets.includes(col);
+                checkbox.addEventListener('change', () => {
+                    if (checkbox.checked && !activeDatasets.includes(col)) {
+                        activeDatasets.push(col);
+                    } else if (!checkbox.checked) {
+                        activeDatasets = activeDatasets.filter(ds => ds !== col);
+                    }
+                    updateChart();
+                });
+                
+                const label = document.createElement('label');
+                label.htmlFor = `col-${col}`;
+                label.textContent = col;
+                label.style.color = getDatasetColor(col);
+                
+                wrapper.appendChild(checkbox);
+                wrapper.appendChild(label);
+                container.appendChild(wrapper);
+            });
+        }
+
+        // Get a consistent color for each dataset
+        function getDatasetColor(datasetLabel) {
+            const colors = [
+                '#4e79a7', '#f28e2b', '#e15759', '#76b7b2', 
+                '#59a14f', '#edc948', '#b07aa1', '#ff9da7', 
+                '#9c755f', '#bab0ac'
+            ];
+            const index = availableColumns.indexOf(datasetLabel) % colors.length;
+            return colors[index];
+        }
+
+        // Convert hex to rgba
+        function hexToRgba(hex, alpha) {
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+
+        // Setup calculator event listeners
+        function setupEventListeners() {
+            // Pause/Resume
+            document.getElementById('pauseBtn').addEventListener('click', function() {
+                isPaused = !isPaused;
+                this.textContent = isPaused ? 'Resume Updates' : 'Pause Updates';
+            });
+
+            // Reset Zoom
+            document.getElementById('resetZoomBtn').addEventListener('click', function() {
+                if (chart) chart.resetZoom();
+            });
+
+            // Fit to Screen
+            document.getElementById('fitToScreenBtn').addEventListener('click', function() {
+                if (chart && allLabels.length > 0) {
+                    chart.options.scales.x.min = undefined;
+                    chart.options.scales.x.max = undefined;
+                    chart.update();
+                }
+            });
+
+            // Clear Selection
+            document.getElementById('clearSelection').addEventListener('click', clearSelection);
+
+            // Calculator functions
+            document.getElementById('calculateAvg').addEventListener('click', calculateAverage);
+            document.getElementById('calculateDiff').addEventListener('click', calculateDifference);
+            document.getElementById('calculateSum').addEventListener('click', calculateSum);
+            document.getElementById('calculateDerivative').addEventListener('click', calculateDerivative);
+            document.getElementById('calculateIntegral').addEventListener('click', calculateIntegral);
+        }
+
+        // Calculator operations
+        function calculateAverage() {
+            if (selectedPoints.length < 1) {
+                alert('Please select at least one point');
+                return;
+            }
+            
+            // Group by dataset
+            const grouped = {};
+            selectedPoints.forEach(point => {
+                if (!grouped[point.dataset]) {
+                    grouped[point.dataset] = [];
+                }
+                grouped[point.dataset].push(point.value);
+            });
+            
+            let html = '<strong>Averages:</strong><ul>';
+            for (const [dataset, values] of Object.entries(grouped)) {
+                const avg = math.mean(values);
+                html += `<li>${dataset}: ${avg.toFixed(4)}</li>`;
+            }
+            html += '</ul>';
+            document.getElementById('calculationResults').innerHTML = html;
+        }
+
+        function calculateDifference() {
+            if (selectedPoints.length < 2) {
+                alert('Please select at least two points');
+                return;
+            }
+            
+            // Group by dataset
+            const grouped = {};
+            selectedPoints.forEach(point => {
+                if (!grouped[point.dataset]) {
+                    grouped[point.dataset] = [];
+                }
+                grouped[point.dataset].push(point);
+            });
+            
+            let html = '<strong>Differences:</strong>';
+            for (const [dataset, points] of Object.entries(grouped)) {
+                if (points.length >= 2) {
+                    // Sort by index to get chronological order
+                    points.sort((a, b) => a.index - b.index);
+                    
+                    const first = points[0];
+                    const last = points[points.length - 1];
+                    const diff = last.value - first.value;
+                    const pctChange = (diff / Math.abs(first.value)) * 100;
+                    
+                    html += `<h4>${dataset}</h4>`;
+                    html += `<div>From ${first.label} to ${last.label}:</div>`;
+                    html += `<div>Absolute: ${diff.toFixed(4)}</div>`;
+                    html += `<div>Percentage: ${pctChange.toFixed(2)}%</div>`;
+                }
+            }
+            document.getElementById('calculationResults').innerHTML = html;
+        }
+
+        function calculateSum() {
+            if (selectedPoints.length < 1) {
+                alert('Please select at least one point');
+                return;
+            }
+            
+            // Group by dataset
+            const grouped = {};
+            selectedPoints.forEach(point => {
+                if (!grouped[point.dataset]) {
+                    grouped[point.dataset] = [];
+                }
+                grouped[point.dataset].push(point.value);
+            });
+            
+            let html = '<strong>Sums:</strong><ul>';
+            for (const [dataset, values] of Object.entries(grouped)) {
+                const sum = math.sum(values);
+                html += `<li>${dataset}: ${sum.toFixed(4)}</li>`;
+            }
+            html += '</ul>';
+            document.getElementById('calculationResults').innerHTML = html;
+        }
+
+        function calculateDerivative() {
+            if (selectedPoints.length < 2) {
+                alert('Please select at least two points from the same dataset');
+                return;
+            }
+            
+            // Group by dataset
+            const grouped = {};
+            selectedPoints.forEach(point => {
+                if (!grouped[point.dataset]) {
+                    grouped[point.dataset] = [];
+                }
+                grouped[point.dataset].push(point);
+            });
+            
+            let html = '<strong>Derivatives (approximate):</strong>';
+            for (const [dataset, points] of Object.entries(grouped)) {
+                if (points.length >= 2) {
+                    // Sort by index to get chronological order
+                    points.sort((a, b) => a.index - b.index);
+                    
+                    html += `<h4>${dataset}</h4>`;
+                    html += '<table border="1"><tr><th>Point</th><th>Value</th><th>Δx</th><th>Δy</th><th>dy/dx</th></tr>';
+                    
+                    for (let i = 1; i < points.length; i++) {
+                        const prev = points[i-1];
+                        const curr = points[i];
+                        
+                        // Calculate differences
+                        const dx = curr.index - prev.index;
+                        const dy = curr.value - prev.value;
+                        const derivative = dy / dx;
+                        
+                        html += `<tr>
+                            <td>${prev.label} → ${curr.label}</td>
+                            <td>${prev.value.toFixed(4)} → ${curr.value.toFixed(4)}</td>
+                            <td>${dx}</td>
+                            <td>${dy.toFixed(4)}</td>
+                            <td>${derivative.toFixed(4)}</td>
+                        </tr>`;
+                    }
+                    
+                    html += '</table>';
+                }
+            }
+            document.getElementById('calculationResults').innerHTML = html;
+        }
+
+        function calculateIntegral() {
+            if (selectedPoints.length < 2) {
+                alert('Please select at least two points from the same dataset');
+                return;
+            }
+            
+            // Group by dataset
+            const grouped = {};
+            selectedPoints.forEach(point => {
+                if (!grouped[point.dataset]) {
+                    grouped[point.dataset] = [];
+                }
+                grouped[point.dataset].push(point);
+            });
+            
+            let html = '<strong>Integrals (approximate):</strong>';
+            for (const [dataset, points] of Object.entries(grouped)) {
+                if (points.length >= 2) {
+                    // Sort by index to get chronological order
+                    points.sort((a, b) => a.index - b.index);
+                    
+                    let totalIntegral = 0;
+                    const results = [];
+                    
+                    for (let i = 1; i < points.length; i++) {
+                        const prev = points[i-1];
+                        const curr = points[i];
+                        
+                        // Calculate integral using trapezoidal rule
+                        const dx = curr.index - prev.index;
+                        const avgY = (prev.value + curr.value) / 2;
+                        const area = dx * avgY;
+                        totalIntegral += area;
+                        
+                        results.push({
+                            from: prev.label,
+                            to: curr.label,
+                            dx: dx,
+                            avgY: avgY,
+                            area: area,
+                            total: totalIntegral
+                        });
+                    }
+                    
+                    html += `<h4>${dataset}</h4>`;
+                    html += `<div>Total integral: ${totalIntegral.toFixed(4)}</div>`;
+                    html += '<table border="1"><tr><th>From</th><th>To</th><th>Δx</th><th>Avg Y</th><th>Area</th><th>Cumulative</th></tr>';
+                    
+                    results.forEach(r => {
+                        html += `<tr>
+                            <td>${r.from}</td>
+                            <td>${r.to}</td>
+                            <td>${r.dx}</td>
+                            <td>${r.avgY.toFixed(4)}</td>
+                            <td>${r.area.toFixed(4)}</td>
+                            <td>${r.total.toFixed(4)}</td>
+                        </tr>`;
+                    });
+                    
+                    html += '</table>';
+                }
+            }
+            document.getElementById('calculationResults').innerHTML = html;
+        }
+
+        function clearSelection() {
+            selectedPoints = [];
+            updateSelectedPointsDisplay();
+            document.getElementById('calculationResults').innerHTML = '';
+            chart.update();
+        }
+
+        // Check for updates
         async function checkForUpdates() {
             try {
                 const response = await fetch(`/check-update?t=${Date.now()}`);
                 const data = await response.json();
-                if (data.last_modified > lastModified) {
+                
+                if (data.last_modified > lastModified && !isPaused) {
                     lastModified = data.last_modified;
                     await fetchCSV();
                 }
             } catch (error) {
-                console.error("Falha ao verificar atualizações:", error);
+                console.error("Update check failed:", error);
             }
         }
 
-        fetchCSV();
-        setInterval(checkForUpdates, 1000);
+        // Initialize everything when the page loads
+        window.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            setInterval(checkForUpdates, 500);
+        });
     </script>
 </body>
 </html>
