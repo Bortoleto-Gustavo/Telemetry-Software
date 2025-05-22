@@ -9,7 +9,7 @@
   
 ## INSTALAÇÃO E EXECUÇÃO
 
-  [Git](ignore_images/Git)
+  <img width = "853" alt = "GIT Download" src="https://github.com/Bortoleto-Gustavo/Telemetry-Software/blob/main/ignore_images/Git">
   
   Baixe o arquivo .zip e extraia os arquivos.
   
@@ -19,11 +19,11 @@
 
   Python app.py
   
-  [Launch](ignore_images/Launch.jpeg)
+  <img width = "853" alt = "Launch" src="https://github.com/Bortoleto-Gustavo/Telemetry-Software/blob/main/ignore_images/Launch.jpeg">
   
   Abra o site conforme indicado no terminal
   
-  [IP address](ignore_images/open.jpeg)
+  <img width = "853" alt = "IP addres" src="https://github.com/Bortoleto-Gustavo/Telemetry-Software/blob/main/ignore_images/open.jpeg">
   
 ### GUIA DE UTILIZAÇÃO DA WEBPAGE
 
