@@ -21,7 +21,7 @@
   
   <img width = "853" alt = "Launch" src="https://github.com/Bortoleto-Gustavo/Telemetry-Software/blob/main/ignore_images/Launch.jpeg">
   
-  Abra o site conforme indicado no terminal
+  Abra o site utilizando o IP conforme indicado no terminal
   
   <img width = "853" alt = "IP addres" src="https://github.com/Bortoleto-Gustavo/Telemetry-Software/blob/main/ignore_images/open.jpeg">
   
